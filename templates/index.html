@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<!-- PWA -->
+<meta name="theme-color" content="#4ECDC4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="매장관리">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<title>스마트 매장 관리</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --mint:#4ECDC4; --mint-d:#36b5ac;
+  --pink:#FF6B9D; --blue:#74B9FF; --purple:#A29BFE;
+  --red:#FF7675;  --orange:#FDCB6E; --green:#00B894;
+  --yellow:#ffeaa7;
+  --bg:#F0F4F8; --card:#fff; --text:#2D3436; --gray:#888;
+  --shadow:0 2px 12px rgba(0,0,0,.08);
+  --radius:18px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);font-family:'Noto Sans KR',sans-serif;
+     color:var(--text);min-height:100vh;overflow-x:hidden;
+     padding-bottom:80px}
+
+/* ── 헤더 ── */
+.header{
+  background:linear-gradient(135deg,#4ECDC4,#26de81);
+  color:#fff; padding:12px 16px;
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:200;
+  box-shadow:0 2px 16px rgba(78,205,196,.45);
+}
+.header-left{display:flex;align-items:center;gap:10px}
+.header-icon{width:36px;height:36px;background:rgba(255,255,255,.25);
+             border-radius:10px;display:flex;align-items:center;
+             justify-content:center;font-size:20px}
+.header-title{font-size:17px;font-weight:900;letter-spacing:-.3px}
+.header-sub{font-size:10px;opacity:.8;margin-top:1px}
+.header-right{text-align:right}
+.header-time{font-size:13px;font-weight:700}
+.header-date{font-size:10px;opacity:.75}
+.status-dot{display:inline-block;width:7px;height:7px;
+            background:#fff;border-radius:50%;margin-right:4px;
+            animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ── 연결 배너 ── */
+#offline-bar{display:none;background:#e17055;color:#fff;
+             text-align:center;padding:6px;font-size:12px;font-weight:700}
+
+/* ── PWA 설치 배너 ── */
+#install-bar{
+  display:none; background:linear-gradient(90deg,#6c5ce7,#a29bfe);
+  color:#fff; padding:10px 16px;
+  align-items:center; justify-content:space-between; gap:10px;
+}
+#install-bar span{font-size:13px;font-weight:700}
+#install-bar button{
+  background:#fff; color:#6c5ce7; border:none;
+  padding:6px 14px; border-radius:20px;
+  font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;
+}
+
+/* ── 토스트 ── */
+#toast-wrap{position:fixed;top:68px;right:12px;z-index:999;
+            display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.toast{background:#1a1a2e;color:#fff;padding:10px 14px;
+       border-radius:14px;font-size:13px;font-weight:700;
+       opacity:0;transform:translateX(50px);transition:.3s ease;
+       max-width:240px;border-left:4px solid var(--mint);
+       box-shadow:0 4px 16px rgba(0,0,0,.25)}
+.toast.show{opacity:1;transform:translateX(0)}
+.toast.alert{border-color:var(--red)}
+
+/* ── 섹션 제목 ── */
+.sec-title{
+  font-size:11px;font-weight:700;color:var(--gray);
+  letter-spacing:.5px;text-transform:uppercase;
+  padding:14px 16px 6px;
+}
+
+/* ── 8-카드 그리드 ── */
+.cards{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:10px; padding:0 12px;
+}
+.card{
+  background:var(--card); border-radius:var(--radius);
+  padding:12px 10px; box-shadow:var(--shadow);
+  display:flex; flex-direction:column; align-items:center;
+  gap:2px; cursor:default; transition:.15s; text-align:center;
+  position:relative; overflow:hidden;
+}
+.card::before{
+  content:''; position:absolute; top:0; left:0; right:0; height:3px;
+}
+.card:active{transform:scale(.95)}
+.card-icon{font-size:22px;line-height:1}
+.card-num{font-size:26px;font-weight:900;line-height:1.1}
+.card-lbl{font-size:10px;color:var(--gray);font-weight:500;white-space:nowrap}
+
+/* 카드별 색상 */
+.c-people::before{background:var(--mint)}
+.c-people .card-num{color:var(--mint)}
+.c-total::before{background:var(--blue)}
+.c-total .card-num{color:var(--blue)}
+.c-intru::before{background:var(--orange)}
+.c-intru .card-num{color:var(--orange)}
+.c-fire::before{background:var(--red)}
+.c-fire .card-num{color:var(--red)}
+.c-fall::before{background:#e84393}
+.c-fall .card-num{color:#e84393}
+.c-theft::before{background:#b71c1c}
+.c-theft .card-num{color:#b71c1c}
+.c-sound::before{background:var(--purple)}
+.c-sound .card-num{color:var(--purple)}
+.c-gender::before{background:var(--green)}
+.c-gender .card-num{color:var(--green)}
+
+/* 성별 카드 확장 */
+.c-gender{grid-column:span 2;align-items:flex-start;padding:12px 14px}
+.gender-bar{width:100%;height:6px;border-radius:3px;
+            overflow:hidden;display:flex;margin-top:4px}
+.gbar-m{background:var(--blue);transition:width .5s}
+.gbar-f{background:var(--pink);flex:1}
+.gender-nums{display:flex;justify-content:space-between;
+             font-size:10px;color:var(--gray);margin-top:2px;width:100%}
+
+/* ── 카메라 ── */
+.cam-wrap{padding:12px 12px 0}
+.cam-card{background:#111;border-radius:var(--radius);
+          overflow:hidden;box-shadow:var(--shadow);position:relative}
+.cam-card img{width:100%;display:block;min-height:190px;
+              object-fit:cover;background:#222}
+.cam-badge{position:absolute;top:10px;left:10px;
+           background:rgba(0,0,0,.6);backdrop-filter:blur(4px);
+           color:#fff;font-size:11px;font-weight:700;
+           padding:4px 10px;border-radius:20px;
+           display:flex;align-items:center;gap:5px}
+.live-dot{width:7px;height:7px;background:#ff3b3b;
+          border-radius:50%;animation:pulse 1s infinite}
+.cam-badge.fall-active{background:rgba(232,67,147,.85)}
+
+/* ── 이벤트 ── */
+.evt-wrap{padding:0 12px}
+.evt-list{display:flex;flex-direction:column;gap:6px}
+.evt-item{
+  background:var(--card); border-radius:14px;
+  padding:10px 12px; box-shadow:var(--shadow);
+  display:flex; align-items:center; gap:8px; font-size:12px;
+}
+.evt-badge{
+  font-size:10px;font-weight:700;padding:3px 8px;
+  border-radius:20px;white-space:nowrap
+}
+.badge-입장{background:#d4f5ee;color:#00875a}
+.badge-퇴장{background:#e8f4ff;color:#0074cc}
+.badge-침입감지{background:#fff3e0;color:#e07800}
+.badge-화재감지,.badge-연기감지{background:#ffebeb;color:#cc0000}
+.badge-도난의심{background:#ffebeb;color:#b71c1c}
+.badge-낙상감지{background:#fce4ec;color:#c2185b}
+.badge-소리감지{background:#ede7f6;color:#512da8}
+.evt-detail{color:var(--gray);flex:1;overflow:hidden;
+            text-overflow:ellipsis;white-space:nowrap}
+.evt-time{color:#bbb;font-size:10px;white-space:nowrap}
+.evt-empty{text-align:center;color:#ccc;padding:24px;font-size:13px}
+
+/* ── 하단 바 ── */
+.bottom-bar{
+  position:fixed;bottom:0;left:0;right:0;
+  background:var(--card);
+  padding:8px 12px max(8px, env(safe-area-inset-bottom));
+  box-shadow:0 -2px 20px rgba(0,0,0,.1);
+  display:flex;gap:8px;z-index:100;
+}
+.btn{
+  flex:1;padding:13px 0;border:none;border-radius:14px;
+  font-size:13px;font-weight:700;cursor:pointer;
+  font-family:'Noto Sans KR',sans-serif;transition:.15s;
+}
+.btn:active{transform:scale(.95);opacity:.85}
+.btn-report{background:linear-gradient(135deg,#4ECDC4,#26de81);color:#fff}
+.btn-set{background:#f0f0f0;color:#444}
+.btn-icon{background:#f0f0f0;color:#555;flex:0 0 48px;font-size:18px}
+
+/* 태블릿/PC */
+@media(min-width:540px){
+  .cards{grid-template-columns:repeat(4,1fr)}
+  .cam-card img{min-height:320px}
+}
+@media(min-width:860px){
+  .cards,.cam-wrap,.evt-wrap,.sec-title{max-width:860px;margin-left:auto;margin-right:auto}
+  .bottom-bar{max-width:860px;left:50%;transform:translateX(-50%)}
+}
+</style>
+</head>
+<body>
+
+<div id="offline-bar">오프라인 — 서버 연결 끊김</div>
+<div id="install-bar">
+  <span>📲 홈 화면에 추가하면 앱처럼 사용 가능!</span>
+  <button id="install-btn">설치</button>
+</div>
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-icon">🏪</div>
+    <div>
+      <div class="header-title">스마트 매장</div>
+      <div class="header-sub">ThingsWell AI 모니터</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="header-time"><span class="status-dot"></span><span id="htime">--:--:--</span></div>
+    <div class="header-date" id="hdate"></div>
+  </div>
+</div>
+
+<div id="toast-wrap"></div>
+
+<!-- ① 8개 통계 카드 -->
+<div class="sec-title">실시간 현황</div>
+<div class="cards">
+  <!-- 카드 1: 현재 인원 -->
+  <div class="card c-people">
+    <div class="card-icon">👥</div>
+    <div class="card-num" id="c-cur">0</div>
+    <div class="card-lbl">현재 인원</div>
+  </div>
+  <!-- 카드 2: 오늘 방문객 -->
+  <div class="card c-total">
+    <div class="card-icon">📊</div>
+    <div class="card-num" id="c-tot">0</div>
+    <div class="card-lbl">오늘 방문객</div>
+  </div>
+  <!-- 카드 3: 침입 감지 -->
+  <div class="card c-intru">
+    <div class="card-icon">⚠️</div>
+    <div class="card-num" id="c-intr">0</div>
+    <div class="card-lbl">침입 감지</div>
+  </div>
+  <!-- 카드 4: 화재/연기 -->
+  <div class="card c-fire">
+    <div class="card-icon">🔥</div>
+    <div class="card-num" id="c-fire">0</div>
+    <div class="card-lbl">화재/연기</div>
+  </div>
+  <!-- 카드 5: 낙상 감지 -->
+  <div class="card c-fall">
+    <div class="card-icon">🚑</div>
+    <div class="card-num" id="c-fall">0</div>
+    <div class="card-lbl">낙상 감지</div>
+  </div>
+  <!-- 카드 6: 도난 의심 -->
+  <div class="card c-theft">
+    <div class="card-icon">🚨</div>
+    <div class="card-num" id="c-theft">0</div>
+    <div class="card-lbl">도난 의심</div>
+  </div>
+  <!-- 카드 7: 소리 감지 -->
+  <div class="card c-sound">
+    <div class="card-icon">🔊</div>
+    <div class="card-num" id="c-sound">0</div>
+    <div class="card-lbl">소리 감지</div>
+  </div>
+  <!-- 카드 8: 성별 분포 (2칸) -->
+  <div class="card c-gender" id="gender-card" style="display:none">
+    <div style="display:flex;align-items:center;gap:6px;width:100%">
+      <span style="font-size:18px">🚹🚺</span>
+      <span style="font-size:11px;font-weight:700">성별 분포</span>
+    </div>
+    <div class="gender-bar" style="width:100%">
+      <div class="gbar-m" id="gbar-m" style="width:50%"></div>
+      <div class="gbar-f" id="gbar-f" style="width:50%"></div>
+    </div>
+    <div class="gender-nums">
+      <span>👨 <b id="gcnt-m">0</b>명</span>
+      <span>👩 <b id="gcnt-f">0</b>명</span>
+    </div>
+  </div>
+  <!-- 성별 없을 때 빈 카드 placeholder (2칸) -->
+  <div class="card" id="gender-placeholder" style="grid-column:span 2;background:#f9f9f9;box-shadow:none">
+    <div style="font-size:20px;opacity:.3">🚹🚺</div>
+    <div style="font-size:10px;color:#ccc">성별 분석</div>
+    <div style="font-size:9px;color:#ddd">모델 필요</div>
+  </div>
+</div>
+
+<!-- ② 카메라 피드 -->
+<div class="sec-title">카메라 LIVE</div>
+<div class="cam-wrap">
+  <div class="cam-card" id="cam-card">
+    <img id="feed" src="/video" alt="카메라 피드"
+         onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%22225%22%3E%3Crect fill=%22%23222%22 width=%22400%22 height=%22225%22/%3E%3Ctext x=%22200%22 y=%22120%22 text-anchor=%22middle%22 fill=%22%23555%22 font-size=%2218%22%3E카메라 연결 중...%3C/text%3E%3C/svg%3E'">
+    <div class="cam-badge" id="cam-badge">
+      <div class="live-dot"></div> LIVE
+    </div>
+  </div>
+</div>
+
+<!-- ③ 이벤트 로그 -->
+<div class="sec-title">최근 이벤트</div>
+<div class="evt-wrap">
+  <div class="evt-list" id="evt-list">
+    <div class="evt-empty">이벤트 없음</div>
+  </div>
+</div>
+
+<!-- 하단 버튼 바 -->
+<div class="bottom-bar">
+  <button class="btn btn-report" onclick="makeReport()">📄 보고서</button>
+  <button class="btn btn-set" onclick="location.href='/settings'">⚙️ 설정</button>
+  <button class="btn btn-icon" onclick="location.reload()">🔄</button>
+</div>
+
+<script>
+// ── PWA 설치 프롬프트 ─────────────────────────
+let _deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  _deferredPrompt = e;
+  document.getElementById('install-bar').style.display = 'flex';
+});
+document.getElementById('install-btn').addEventListener('click', async () => {
+  if (!_deferredPrompt) return;
+  _deferredPrompt.prompt();
+  const { outcome } = await _deferredPrompt.userChoice;
+  _deferredPrompt = null;
+  document.getElementById('install-bar').style.display = 'none';
+});
+window.addEventListener('appinstalled', () => {
+  document.getElementById('install-bar').style.display = 'none';
+});
+
+// ── Service Worker 등록 ───────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+// ── 시계 ─────────────────────────────────────
+function tick() {
+  const now = new Date();
+  document.getElementById('htime').textContent =
+    now.toLocaleTimeString('ko-KR', { hour12: false });
+  document.getElementById('hdate').textContent =
+    now.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', weekday: 'short' });
+}
+tick();
+setInterval(tick, 1000);
+
+// ── WebSocket ─────────────────────────────────
+let wsOk = false;
+let prevAlerts = [];
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onopen = () => {
+    wsOk = true;
+    document.getElementById('offline-bar').style.display = 'none';
+  };
+  ws.onclose = ws.onerror = () => {
+    wsOk = false;
+    document.getElementById('offline-bar').style.display = 'block';
+    setTimeout(connect, 3000); // 자동 재연결
+  };
+
+  ws.onmessage = e => {
+    const d = JSON.parse(e.data);
+
+    animNum('c-cur',   d.current   ?? 0);
+    animNum('c-tot',   d.total     ?? 0);
+    animNum('c-intr',  d.intrusion ?? 0);
+    animNum('c-fire',  d.fire      ?? 0);
+    animNum('c-fall',  d.fall      ?? 0);
+    animNum('c-theft', d.theft     ?? 0);
+    animNum('c-sound', d.sound     ?? 0);
+
+    // 낙상 감지 시 카메라 뱃지 강조
+    const badge = document.getElementById('cam-badge');
+    if ((d.fall ?? 0) > 0) {
+      badge.classList.add('fall-active');
+      badge.innerHTML = '<div class="live-dot"></div> 낙상 감지!';
+    } else {
+      badge.classList.remove('fall-active');
+      badge.innerHTML = '<div class="live-dot"></div> LIVE';
+    }
+
+    // 성별 카드
+    if (d.gender_ok) {
+      document.getElementById('gender-card').style.display = '';
+      document.getElementById('gender-placeholder').style.display = 'none';
+      const m = d.gender?.['남성'] ?? 0, f = d.gender?.['여성'] ?? 0, tot = m + f || 1;
+      document.getElementById('gbar-m').style.width = (m / tot * 100) + '%';
+      document.getElementById('gcnt-m').textContent = m;
+      document.getElementById('gcnt-f').textContent = f;
+    }
+
+    // 토스트
+    const alerts = d.alerts ?? [];
+    alerts.forEach(a => {
+      if (!prevAlerts.some(p => p.text === a.text)) showToast(a.text, a.color);
+    });
+    prevAlerts = alerts;
+
+    // 이벤트 로그
+    const evts = d.events ?? [];
+    const list = document.getElementById('evt-list');
+    if (evts.length === 0) {
+      list.innerHTML = '<div class="evt-empty">이벤트 없음</div>';
+    } else {
+      list.innerHTML = evts.slice().reverse().map(ev => `
+        <div class="evt-item">
+          <span class="evt-badge badge-${ev.type}">${ev.type}</span>
+          <span class="evt-detail">${ev.detail ?? ''}</span>
+          <span class="evt-time">${ev.time}</span>
+        </div>`).join('');
+    }
+  };
+}
+connect();
+
+// ── 숫자 애니메이션 ───────────────────────────
+const _nums = {};
+function animNum(id, target) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const cur = _nums[id] ?? 0;
+  if (cur === target) return;
+  _nums[id] = target;
+  let s = cur, step = (target - cur) / 10;
+  const iv = setInterval(() => {
+    s += step;
+    const v = Math.round(step > 0 ? Math.min(s, target) : Math.max(s, target));
+    el.textContent = v;
+    if (v === target) clearInterval(iv);
+  }, 30);
+}
+
+// ── 토스트 ────────────────────────────────────
+function showToast(text, color) {
+  const wrap = document.getElementById('toast-wrap');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  const isAlert = text.includes('낙상') || text.includes('화재') ||
+                  text.includes('도난') || text.includes('소리') || text.includes('침입');
+  if (isAlert) t.classList.add('alert');
+  t.style.borderColor = color ?? '#4ECDC4';
+  const icon = text.includes('어서') ? '🚪' : text.includes('안녕') ? '👋'
+    : text.includes('낙상') ? '🚑' : text.includes('화재') ? '🔥'
+    : text.includes('도난') ? '🚨' : text.includes('침입') ? '⚠️'
+    : text.includes('소리') ? '🔊' : 'ℹ️';
+  t.textContent = icon + ' ' + text;
+  wrap.prepend(t);
+  requestAnimationFrame(() => { requestAnimationFrame(() => t.classList.add('show')); });
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 400);
+  }, 5000);
+}
+
+// ── 보고서 ────────────────────────────────────
+async function makeReport() {
+  const btn = document.querySelector('.btn-report');
+  btn.textContent = '⏳ 생성 중...';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/report').then(r => r.json());
+    btn.textContent = r.ok ? '✅ 완료!' : '❌ 오류';
+  } catch {
+    btn.textContent = '❌ 오류';
+  }
+  btn.disabled = false;
+  setTimeout(() => { btn.textContent = '📄 보고서'; }, 3000);
+}
+</script>
+</body>
+</html>

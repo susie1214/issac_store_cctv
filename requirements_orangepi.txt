@@ -1,0 +1,26 @@
+# OrangePi (ARM Linux) 전용 패키지 목록
+# 설치: pip install -r requirements_orangepi.txt
+#
+# ※ opencv-python-headless : GUI 없는 서버용 (일반 opencv-python 설치 안됨)
+# ※ tflite-runtime          : tensorflow 풀패키지 대신 경량 런타임
+# ※ python-multipart        : FastAPI 폼 처리용
+
+# 핵심
+ultralytics>=8.3.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+
+# 웹 서버
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# UI
+Pillow>=10.0.0
+
+# 소리 감지
+sounddevice>=0.4.6
+tflite-runtime>=2.14.0        # Python 3.11 이하에서만 설치됨
+
+# 오디오 재생 (OrangePi - PowerShell 없으므로 pygame 사용)
+pygame>=2.5.0

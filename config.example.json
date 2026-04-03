@@ -1,0 +1,23 @@
+{
+  "camera": {
+    "source": "0",
+    "width": 1280,
+    "height": 720
+  },
+  "detection": {
+    "model": "yolov8n-pose.onnx",
+    "conf": 0.4,
+    "infer_every": 5,
+    "detect_scale": 0.5
+  },
+  "boundary": {
+    "line_ratio": 0.5,
+    "flip": false
+  },
+  "_orangepi_recommended": {
+    "camera_width": 640,
+    "camera_height": 480,
+    "detect_scale": 1.0,
+    "infer_every": 7
+  }
+}

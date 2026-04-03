@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>⚙️ 설정 — 스마트 매장</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--mint:#4ECDC4;--bg:#FFF8F3;--card:#fff;--text:#2D3436;--gray:#888;
+      --shadow:0 4px 20px rgba(0,0,0,.08);}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);font-family:'Noto Sans KR',sans-serif;color:var(--text);}
+.header{background:linear-gradient(135deg,var(--mint),#26de81);color:#fff;
+        padding:13px 16px;display:flex;align-items:center;gap:12px;
+        position:sticky;top:0;z-index:100;
+        box-shadow:0 2px 12px rgba(78,205,196,.4);}
+.back-btn{background:rgba(255,255,255,.25);border:none;color:#fff;
+          padding:6px 14px;border-radius:8px;cursor:pointer;font-size:14px;
+          font-family:'Noto Sans KR',sans-serif;}
+.header h1{font-size:18px;font-weight:700;}
+.tabs{display:flex;border-bottom:2px solid #eee;background:#fff;
+      position:sticky;top:52px;z-index:99;}
+.tab{flex:1;padding:12px 4px;border:none;background:none;
+     font-size:13px;font-weight:700;cursor:pointer;color:var(--gray);
+     font-family:'Noto Sans KR',sans-serif;}
+.tab.active{color:var(--mint);border-bottom:3px solid var(--mint);margin-bottom:-2px;}
+.section{display:none;padding:14px 14px 90px;}
+.section.active{display:block;}
+.card{background:var(--card);border-radius:14px;padding:16px;
+      box-shadow:var(--shadow);margin-bottom:14px;}
+.card-title{font-size:12px;font-weight:700;color:var(--gray);
+            text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;}
+/* 캔버스 */
+.canvas-wrap{border-radius:10px;overflow:hidden;background:#111;cursor:ew-resize;}
+canvas{display:block;max-width:100%;height:auto;}
+.hint{font-size:11px;color:var(--gray);text-align:center;margin-top:6px;}
+/* 모드 버튼 */
+.mode-row{display:flex;gap:8px;margin-bottom:12px;}
+.mode-btn{flex:1;padding:10px;border:2px solid #eee;border-radius:10px;
+          background:#fff;font-size:13px;font-weight:700;cursor:pointer;
+          font-family:'Noto Sans KR',sans-serif;color:var(--gray);transition:.15s;}
+.mode-btn.active{border-color:var(--mint);color:var(--mint);background:#f0fffe;}
+/* 슬라이더 */
+.row{display:flex;align-items:center;gap:10px;margin-bottom:11px;}
+.row-label{font-size:13px;min-width:90px;}
+.row-wrap{flex:1;}
+input[type=range]{width:100%;accent-color:var(--mint);}
+.row-val{font-size:14px;font-weight:700;color:var(--mint);min-width:44px;text-align:right;}
+/* 셀렉트/인풋 */
+select,input[type=text]{
+  flex:1;padding:9px 12px;border:1.5px solid #ddd;border-radius:8px;
+  font-size:13px;font-family:'Noto Sans KR',sans-serif;}
+/* 토글 */
+.toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:11px;}
+.toggle-row span{font-size:13px;flex:1;}
+.toggle{position:relative;display:inline-block;width:44px;height:24px;}
+.toggle input{opacity:0;width:0;height:0;}
+.toggle-sl{position:absolute;inset:0;background:#ccc;border-radius:24px;cursor:pointer;}
+.toggle-sl:before{content:'';position:absolute;height:18px;width:18px;
+                  left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.25s;}
+input:checked+.toggle-sl{background:var(--mint);}
+input:checked+.toggle-sl:before{transform:translateX(20px);}
+/* 버튼 */
+.btn{padding:12px 16px;border:none;border-radius:12px;font-size:14px;
+     font-weight:700;cursor:pointer;font-family:'Noto Sans KR',sans-serif;transition:.15s;}
+.btn:active{transform:scale(.96);}
+.btn-mint{background:var(--mint);color:#fff;}
+.btn-red{background:#FF7675;color:#fff;}
+.btn-gray{background:#f0f0f0;color:#555;}
+.btn-row{display:flex;gap:8px;margin-top:10px;}
+.btn-row .btn{flex:1;}
+.note{font-size:11px;color:#aaa;margin-top:4px;}
+.warn{font-size:11px;color:#e07800;margin-top:4px;}
+/* 저장바 */
+.save-bar{position:fixed;bottom:0;left:0;right:0;background:#fff;
+          padding:12px 16px;box-shadow:0 -2px 16px rgba(0,0,0,.1);
+          display:flex;gap:8px;}
+/* 토스트 */
+.toast-fixed{position:fixed;top:70px;left:50%;transform:translateX(-50%);
+             background:#222;color:#fff;padding:10px 22px;border-radius:12px;
+             font-size:13px;font-weight:700;opacity:0;transition:.3s;pointer-events:none;
+             white-space:nowrap;}
+.toast-fixed.show{opacity:1;}
+</style>
+</head>
+<body>
+<div class="header">
+  <button class="back-btn" onclick="location.href='/'">← 돌아가기</button>
+  <h1>⚙️ 설정</h1>
+</div>
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('boundary',this)">🚪 경계선/구역</button>
+  <button class="tab"        onclick="switchTab('detect',this)"  >🔍 감지 설정</button>
+  <button class="tab"        onclick="switchTab('camera',this)"  >📷 카메라</button>
+</div>
+
+<!-- ① 경계선 / 구역 탭 -->
+<div class="section active" id="tab-boundary">
+  <div class="card">
+    <div class="card-title">편집 모드</div>
+    <div class="mode-row">
+      <button class="mode-btn active" id="mode-line" onclick="setMode('line')">
+        📏 경계선 이동
+      </button>
+      <button class="mode-btn" id="mode-zone" onclick="setMode('zone')">
+        🔲 침입구역 그리기
+      </button>
+    </div>
+    <div class="canvas-wrap" id="canvas-wrap">
+      <canvas id="setup-canvas"></canvas>
+    </div>
+    <div class="hint" id="canvas-hint">← 캔버스에서 경계선을 좌우로 드래그하세요</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">경계선 위치</div>
+    <div class="row">
+      <span class="row-label">좌우 위치</span>
+      <div class="row-wrap">
+        <input type="range" id="line-slider" min="5" max="95" value="20"
+               oninput="onLineSlider(this.value)">
+      </div>
+      <span class="row-val" id="line-pct">20%</span>
+    </div>
+    <div class="toggle-row">
+      <span>방향 반전 (우→좌가 입장)</span>
+      <label class="toggle">
+        <input type="checkbox" id="flip-toggle">
+        <span class="toggle-sl"></span>
+      </label>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-mint" onclick="applyBoundary()">✅ 경계선 적용</button>
+      <button class="btn btn-gray" onclick="refreshCanvas()">🔄 스냅샷 갱신</button>
+    </div>
+  </div>
+
+  <div class="card" id="zone-card">
+    <div class="card-title">침입 금지 구역 (<span id="zone-count">0</span>개 꼭짓점)</div>
+    <div class="note">구역 모드에서 캔버스를 클릭해 꼭짓점을 추가하세요 (3개 이상).</div>
+    <div class="btn-row">
+      <button class="btn btn-mint" onclick="applyZone()">✅ 구역 저장</button>
+      <button class="btn btn-red"  onclick="clearZone()">🗑 초기화</button>
+    </div>
+  </div>
+</div>
+
+<!-- ② 감지 설정 탭 -->
+<div class="section" id="tab-detect">
+  <div class="card">
+    <div class="card-title">추론 최적화</div>
+    <div class="row">
+      <span class="row-label">프레임 간격</span>
+      <div class="row-wrap">
+        <input type="range" id="infer-slider" min="1" max="15" value="5"
+               oninput="document.getElementById('infer-val').textContent=this.value+'f마다'">
+      </div>
+      <span class="row-val" id="infer-val">5f마다</span>
+    </div>
+    <div class="note">
+      낮을수록 정확하지만 CPU ↑<br>
+      오렌지파이5: <b>7~10</b> 권장 | PC: <b>3~5</b> 권장<br>
+      사람 감지 시 자동으로 절반 간격으로 빨라짐
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="row-label">감지 해상도</span>
+      <select id="scale-select">
+        <option value="0.25">25% — 가장 빠름 (저사양)</option>
+        <option value="0.5" selected>50% — 기본 (권장)</option>
+        <option value="0.75">75% — 정확</option>
+        <option value="1.0">100% — 원본 (느림)</option>
+      </select>
+    </div>
+    <div class="note">50% = 원본 픽셀의 25% → YOLO 연산 ~4배 절감</div>
+  </div>
+  <div class="card">
+    <div class="card-title">YOLO 파라미터</div>
+    <div class="row">
+      <span class="row-label">신뢰도</span>
+      <div class="row-wrap">
+        <input type="range" id="conf-slider" min="20" max="80" value="40"
+               oninput="document.getElementById('conf-val').textContent=(this.value/100).toFixed(2)">
+      </div>
+      <span class="row-val" id="conf-val">0.40</span>
+    </div>
+    <div class="note">낮을수록 더 많이 감지 (오탐 증가). 0.35~0.50 권장</div>
+    <div class="row" style="margin-top:12px">
+      <span class="row-label">모델</span>
+      <select id="model-select">
+        <option value="yolo11n.pt">yolo11n — 가장 빠름</option>
+        <option value="yolo11s.pt">yolo11s — 빠름</option>
+        <option value="yolo11m.pt">yolo11m — 균형</option>
+        <option value="yolo11l.pt">yolo11l — 정확</option>
+      </select>
+    </div>
+    <div class="warn">⚠️ 모델 변경 시 서버 재시작 필요</div>
+  </div>
+</div>
+
+<!-- ③ 카메라 탭 -->
+<div class="section" id="tab-camera">
+  <div class="card">
+    <div class="card-title">카메라 소스</div>
+    <div class="row">
+      <span class="row-label">소스</span>
+      <input type="text" id="cam-source" value="0"
+             placeholder="0, 1, rtsp://user:pass@ip/stream">
+    </div>
+    <div class="note">
+      USB/내장 카메라: 0 또는 1<br>
+      IP 카메라: rtsp://admin:admin@192.168.x.x:554/stream1<br>
+      FocusAI FID-4100RFWP: rtsp://admin:admin@[IP]:554/h264Preview_01_main
+    </div>
+    <div class="warn">⚠️ 소스 변경 시 서버 재시작 필요</div>
+  </div>
+  <div class="card">
+    <div class="card-title">해상도</div>
+    <div class="row">
+      <span class="row-label">해상도</span>
+      <select id="res-select">
+        <option value="640x480">640×480 — 오렌지파이5 권장</option>
+        <option value="1280x720" selected>1280×720 — HD 기본</option>
+        <option value="1920x1080">1920×1080 — FHD 고사양</option>
+      </select>
+    </div>
+    <div class="warn">⚠️ 해상도 변경 시 서버 재시작 필요</div>
+    <div class="note" style="margin-top:8px">
+      <b>오렌지파이5 최적 설정:</b><br>
+      해상도 640×480 | 감지 해상도 100% (이미 작음) | 프레임 간격 7
+    </div>
+  </div>
+</div>
+
+<!-- 저장바 -->
+<div class="save-bar">
+  <button class="btn btn-mint" style="flex:2" onclick="saveAll()">💾 전체 설정 저장</button>
+  <button class="btn btn-gray" style="flex:1" onclick="loadConfig()">↩️ 불러오기</button>
+</div>
+
+<div class="toast-fixed" id="toast"></div>
+
+<script>
+// ── 상태 ──────────────────────────────────────
+let mode      = 'line';
+let lineRatio = 0.20;
+let zonePoints = [];
+let snapImg   = new Image();
+let canvasW = 640, canvasH = 360;
+let isDragging = false;
+
+const canvas = document.getElementById('setup-canvas');
+const ctx    = canvas.getContext('2d');
+
+// ── 탭 전환 ──────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'boundary') refreshCanvas();
+}
+
+// ── 모드 전환 ─────────────────────────────────
+function setMode(m) {
+  mode = m;
+  document.getElementById('mode-line').classList.toggle('active', m === 'line');
+  document.getElementById('mode-zone').classList.toggle('active', m === 'zone');
+  document.getElementById('canvas-hint').textContent =
+    m === 'line' ? '← 캔버스에서 경계선을 좌우로 드래그하세요'
+                 : '↓ 캔버스에서 클릭으로 꼭짓점 추가 (3개 이상)';
+  document.getElementById('canvas-wrap').style.cursor = m === 'line' ? 'ew-resize' : 'crosshair';
+}
+
+// ── 스냅샷 로드 ───────────────────────────────
+async function refreshCanvas() {
+  try {
+    const resp = await fetch('/api/snapshot?' + Date.now());
+    if (!resp.ok) { drawEmpty(); return; }
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const img  = new Image();
+    img.onload = () => {
+      canvas.width  = img.naturalWidth  || 640;
+      canvas.height = img.naturalHeight || 360;
+      canvasW = canvas.width;
+      canvasH = canvas.height;
+      snapImg = img;
+      drawCanvas();
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  } catch(e) { drawEmpty(); }
+}
+
+function drawEmpty() {
+  canvas.width = 640; canvas.height = 360;
+  canvasW = 640; canvasH = 360;
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, 640, 360);
+  ctx.fillStyle = '#555';
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('카메라 연결 대기 중...', 320, 185);
+}
+
+function drawCanvas() {
+  ctx.clearRect(0, 0, canvasW, canvasH);
+  if (snapImg.src) ctx.drawImage(snapImg, 0, 0);
+
+  // 경계선 띠
+  const lx = Math.round(lineRatio * canvasW);
+  ctx.fillStyle = 'rgba(0,220,80,0.15)';
+  ctx.fillRect(lx - 18, 0, 36, canvasH);
+
+  // 경계선
+  ctx.strokeStyle = '#00E050';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, canvasH); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1;
+  [[lx-1],[lx+1]].forEach(([x])=>{
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvasH); ctx.stroke();
+  });
+
+  // 라벨
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.fillText('출입 경계선', lx, 20);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = 'rgba(0,220,80,.9)';
+  ctx.textAlign = 'left';
+  ctx.fillText('▶ 입장', lx + 10, canvasH / 2);
+  ctx.textAlign = 'right';
+  ctx.fillText('퇴장 ◀', lx - 10, canvasH / 2 + 20);
+
+  // 구역
+  if (zonePoints.length >= 1) {
+    ctx.strokeStyle = '#FF6B00';
+    ctx.fillStyle   = 'rgba(255,107,0,0.18)';
+    ctx.lineWidth   = 2;
+    ctx.beginPath();
+    ctx.moveTo(zonePoints[0][0], zonePoints[0][1]);
+    for (let i = 1; i < zonePoints.length; i++)
+      ctx.lineTo(zonePoints[i][0], zonePoints[i][1]);
+    if (zonePoints.length >= 3) ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    zonePoints.forEach(([px,py])=>{
+      ctx.fillStyle='#FF6B00';
+      ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI*2); ctx.fill();
+    });
+  }
+}
+
+// ── 좌표 보정 (CSS 스케일 대응) ───────────────
+function coords(e) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvasW / rect.width;
+  const sy = canvasH / rect.height;
+  const src = e.touches ? e.touches[0] : e;
+  return [(src.clientX - rect.left) * sx, (src.clientY - rect.top) * sy];
+}
+
+// ── 마우스/터치 이벤트 ────────────────────────
+canvas.addEventListener('mousedown',  onDown);
+canvas.addEventListener('mousemove',  onMove);
+canvas.addEventListener('mouseup',    () => isDragging = false);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); onDown(e); }, {passive:false});
+canvas.addEventListener('touchmove',  e => { e.preventDefault(); onMove(e); }, {passive:false});
+canvas.addEventListener('touchend',   e => { e.preventDefault(); isDragging = false; }, {passive:false});
+
+function onDown(e) {
+  const [x, y] = coords(e);
+  if (mode === 'line') {
+    isDragging = true;
+    setLine(x / canvasW);
+  } else {
+    zonePoints.push([Math.round(x), Math.round(y)]);
+    document.getElementById('zone-count').textContent = zonePoints.length;
+    drawCanvas();
+  }
+}
+function onMove(e) {
+  if (mode !== 'line' || !isDragging) return;
+  setLine(coords(e)[0] / canvasW);
+}
+function setLine(ratio) {
+  lineRatio = Math.max(0.05, Math.min(0.95, ratio));
+  const pct = Math.round(lineRatio * 100);
+  document.getElementById('line-pct').textContent = pct + '%';
+  document.getElementById('line-slider').value = pct;
+  drawCanvas();
+}
+function onLineSlider(val) {
+  lineRatio = val / 100;
+  document.getElementById('line-pct').textContent = val + '%';
+  drawCanvas();
+}
+
+// ── 경계선 적용 ───────────────────────────────
+async function applyBoundary() {
+  const flip = document.getElementById('flip-toggle').checked;
+  const r = await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ boundary: { line_ratio: lineRatio, flip } })
+  }).then(r => r.json());
+  showToast(r.ok ? '✅ 경계선 적용됨 (즉시 반영)' : '❌ 오류');
+}
+
+// ── 구역 저장 / 초기화 ─────────────────────────
+async function applyZone() {
+  if (zonePoints.length < 3) { showToast('꼭짓점 3개 이상 필요'); return; }
+  const r = await fetch('/api/zone', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ points: zonePoints })
+  }).then(r => r.json());
+  showToast(r.ok ? '✅ 구역 저장됨' : '❌ 오류');
+}
+async function clearZone() {
+  zonePoints = [];
+  document.getElementById('zone-count').textContent = 0;
+  await fetch('/api/zone', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ points: [] })
+  });
+  drawCanvas();
+  showToast('구역 초기화됨');
+}
+
+// ── 전체 저장 ─────────────────────────────────
+async function saveAll() {
+  const res = document.getElementById('res-select').value.split('x');
+  const data = {
+    camera: {
+      source: document.getElementById('cam-source').value,
+      width:  parseInt(res[0]),
+      height: parseInt(res[1]),
+    },
+    detection: {
+      model:        document.getElementById('model-select').value,
+      conf:         parseInt(document.getElementById('conf-slider').value) / 100,
+      infer_every:  parseInt(document.getElementById('infer-slider').value),
+      detect_scale: parseFloat(document.getElementById('scale-select').value),
+    },
+    boundary: {
+      line_ratio: lineRatio,
+      flip: document.getElementById('flip-toggle').checked,
+    },
+  };
+  const r = await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json());
+  showToast(r.ok ? '✅ config.json 저장 완료!' : '❌ 저장 실패');
+}
+
+// ── 설정 불러오기 ─────────────────────────────
+async function loadConfig() {
+  try {
+    const c = await fetch('/api/config').then(r => r.json());
+    lineRatio = c.boundary?.line_ratio ?? 0.20;
+    const pct = Math.round(lineRatio * 100);
+    document.getElementById('line-slider').value = pct;
+    document.getElementById('line-pct').textContent = pct + '%';
+    document.getElementById('flip-toggle').checked = c.boundary?.flip ?? false;
+
+    const ie = c.detection?.infer_every ?? 5;
+    document.getElementById('infer-slider').value = ie;
+    document.getElementById('infer-val').textContent = ie + 'f마다';
+    document.getElementById('scale-select').value = String(c.detection?.detect_scale ?? 0.5);
+    const conf = Math.round((c.detection?.conf ?? 0.4) * 100);
+    document.getElementById('conf-slider').value = conf;
+    document.getElementById('conf-val').textContent = (conf/100).toFixed(2);
+    document.getElementById('model-select').value = c.detection?.model ?? 'yolo11n.pt';
+    document.getElementById('cam-source').value = c.camera?.source ?? '0';
+    const wh = (c.camera?.width??1280)+'x'+(c.camera?.height??720);
+    const sel = document.getElementById('res-select');
+    if ([...sel.options].some(o=>o.value===wh)) sel.value = wh;
+
+    drawCanvas();
+  } catch(e) { console.warn('설정 로드 실패', e); }
+}
+
+// ── 토스트 ────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ── 초기화 ────────────────────────────────────
+window.addEventListener('load', async () => {
+  await loadConfig();
+  await refreshCanvas();
+  // 경계선 탭이 보일 때만 3초마다 자동 갱신
+  setInterval(() => {
+    if (document.getElementById('tab-boundary').classList.contains('active') && !isDragging)
+      refreshCanvas();
+  }, 3000);
+});
+</script>
+</body>
+</html>
