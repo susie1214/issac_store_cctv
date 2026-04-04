@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import cv2
@@ -43,6 +43,9 @@ import numpy as np
 from ultralytics import YOLO
 
 from fall_detector import FallDetector
+from face_manager import FaceManager
+from theft_detector import TheftDetector
+from kakao_notify import KakaoNotifier
 
 # ── 헤드리스 감지 (OrangePi/SSH 환경 = 디스플레이 없음) ──
 HEADLESS = (
@@ -416,6 +419,147 @@ def generate_report(total_visitors: int, fire_count: int, intrusion_count: int):
     return fname
 
 
+def _load_csv_range(start_date: datetime, end_date: datetime) -> list[dict]:
+    """start_date ~ end_date 범위의 모든 events_YYYYMMDD.csv 로드"""
+    rows = []
+    cur = start_date
+    while cur <= end_date:
+        csv_path = LOG_DIR / f"events_{cur.strftime('%Y%m%d')}.csv"
+        if csv_path.exists():
+            with open(csv_path, newline="", encoding="utf-8-sig") as f:
+                rows.extend(list(csv.DictReader(f)))
+        cur = cur.replace(day=cur.day + 1) if cur.day < 28 else \
+              (cur.replace(month=cur.month + 1, day=1) if cur.month < 12
+               else cur.replace(year=cur.year + 1, month=1, day=1))
+    return rows
+
+
+def _make_period_report(rows: list[dict], title: str, subtitle: str) -> Path:
+    """공통 HTML 보고서 (일별 방문객 막대 + 이벤트 표)"""
+    from collections import Counter
+    now = datetime.now()
+    fname = LOG_DIR / f"report_{now.strftime('%Y%m%d_%H%M%S')}.html"
+
+    # 날짜별 입장 집계
+    daily: dict[str, int] = Counter(
+        e["date"] for e in rows if e.get("type") == "입장"
+    )
+    total = sum(daily.values())
+
+    fire_cnt     = sum(1 for e in rows if e.get("type") == "화재감지")
+    smoke_cnt    = sum(1 for e in rows if e.get("type") == "연기감지")
+    intrude_cnt  = sum(1 for e in rows if e.get("type") == "침입감지")
+    theft_cnt    = sum(1 for e in rows if e.get("type") == "도난의심")
+    fall_cnt     = sum(1 for e in rows if e.get("type") == "낙상감지")
+
+    bars = ""
+    for date_str in sorted(daily.keys()):
+        cnt = daily[date_str]
+        pct = min(cnt * 5, 100)
+        label = date_str[5:]  # MM-DD
+        bars += f"""
+        <div class="bar-row">
+          <span class="bar-label">{label}</span>
+          <div class="bar-bg"><div class="bar-fill" style="width:{pct}%"></div></div>
+          <span class="bar-val">{cnt}명</span>
+        </div>"""
+
+    event_rows = "".join(
+        f'<tr><td>{e.get("date","")}</td><td>{e.get("time","")}</td>'
+        f'<td class="et-{e.get("type","")}">{e.get("type","")}</td>'
+        f'<td>{e.get("detail","")}</td></tr>'
+        for e in rows[-100:]
+    )
+
+    html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>{title}</title>
+<style>
+  body {{ font-family: '맑은 고딕', sans-serif; background:#f4f6f8; margin:0; padding:24px; color:#222; }}
+  h1   {{ font-size:22px; margin-bottom:4px; }}
+  .sub {{ color:#888; font-size:13px; margin-bottom:24px; }}
+  .cards {{ display:flex; gap:12px; margin-bottom:28px; flex-wrap:wrap; }}
+  .card {{ background:#fff; border-radius:10px; padding:16px 22px; min-width:130px;
+            box-shadow:0 2px 8px rgba(0,0,0,.08); }}
+  .card-num  {{ font-size:34px; font-weight:700; color:#1a6fd4; }}
+  .card-label{{ font-size:12px; color:#777; margin-top:4px; }}
+  h2 {{ font-size:15px; font-weight:700; margin-bottom:10px; border-left:4px solid #1a6fd4; padding-left:10px; }}
+  .bar-row  {{ display:flex; align-items:center; gap:8px; margin-bottom:5px; font-size:12px; }}
+  .bar-label{{ width:44px; color:#555; }}
+  .bar-bg   {{ flex:1; background:#eee; border-radius:4px; height:14px; }}
+  .bar-fill {{ background:#1a6fd4; height:100%; border-radius:4px; }}
+  .bar-val  {{ width:36px; text-align:right; color:#333; }}
+  table {{ width:100%; border-collapse:collapse; background:#fff;
+           border-radius:10px; overflow:hidden;
+           box-shadow:0 2px 8px rgba(0,0,0,.08); font-size:12px; }}
+  th {{ background:#222; color:#fff; padding:8px 12px; text-align:left; }}
+  td {{ padding:7px 12px; border-bottom:1px solid #f0f0f0; }}
+  .et-입장    {{ color:#1a6fd4; font-weight:700; }}
+  .et-화재감지{{ color:#e53e3e; font-weight:700; }}
+  .et-침입감지{{ color:#e07800; font-weight:700; }}
+  .et-도난의심{{ color:#9b2335; font-weight:700; }}
+  .et-낙상감지{{ color:#6b21a8; font-weight:700; }}
+  .footer {{ text-align:center; color:#bbb; font-size:12px; margin-top:24px; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+<div class="sub">{subtitle} &nbsp;|&nbsp; 생성: {now.strftime('%Y-%m-%d %H:%M:%S')}</div>
+
+<div class="cards">
+  <div class="card"><div class="card-num">{total}</div><div class="card-label">총 방문객 (명)</div></div>
+  <div class="card"><div class="card-num" style="color:#e53e3e">{fire_cnt+smoke_cnt}</div><div class="card-label">화재/연기 (건)</div></div>
+  <div class="card"><div class="card-num" style="color:#e07800">{intrude_cnt}</div><div class="card-label">침입 감지 (건)</div></div>
+  <div class="card"><div class="card-num" style="color:#9b2335">{theft_cnt}</div><div class="card-label">도난 의심 (건)</div></div>
+  <div class="card"><div class="card-num" style="color:#6b21a8">{fall_cnt}</div><div class="card-label">낙상 감지 (건)</div></div>
+</div>
+
+<h2>날짜별 방문객 현황</h2>
+<div style="background:#fff;border-radius:10px;padding:16px 20px;
+            box-shadow:0 2px 8px rgba(0,0,0,.08);margin-bottom:28px;">
+{bars if bars else "<p style='color:#aaa;font-size:13px'>데이터 없음</p>"}
+</div>
+
+<h2>이벤트 로그 (최근 100건)</h2>
+<table>
+  <tr><th>날짜</th><th>시간</th><th>이벤트</th><th>내용</th></tr>
+  {event_rows}
+</table>
+<div class="footer">ThingsWell Visitor Management System v2.0</div>
+</body></html>"""
+
+    fname.write_text(html, encoding="utf-8")
+    logger.info(f"보고서 저장: {fname}")
+    try:
+        os.startfile(str(fname))
+    except Exception:
+        pass
+    return fname
+
+
+def generate_weekly_report() -> Path:
+    """이번 주(월~오늘) 보고서"""
+    now = datetime.now()
+    start = now - timedelta(days=now.weekday())   # 이번 주 월요일
+    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = _load_csv_range(start, now)
+    title = f"매장 주간 보고서 — {start.strftime('%m/%d')} ~ {now.strftime('%m/%d')}"
+    subtitle = f"{start.strftime('%Y년 %m월 %d일')} ~ {now.strftime('%Y년 %m월 %d일')}"
+    return _make_period_report(rows, title, subtitle)
+
+
+def generate_monthly_report() -> Path:
+    """이번 달 보고서"""
+    now = datetime.now()
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    rows = _load_csv_range(start, now)
+    title = f"매장 월간 보고서 — {now.strftime('%Y년 %m월')}"
+    subtitle = f"{now.strftime('%Y년 %m월')} 전체"
+    return _make_period_report(rows, title, subtitle)
+
+
 # ──────────────────────────────────────────────
 #  구역 설정 저장/로드
 # ──────────────────────────────────────────────
@@ -504,6 +648,15 @@ class VisitorManager:
         # 낙상 감지
         self.fall_detector = FallDetector()
         self.fall_count    = 0
+
+        # 얼굴 인식 (직원 제외)
+        self.face_manager  = FaceManager()
+
+        # 도난 감지 (Gemini VLM)
+        self.theft_detector = TheftDetector(zone_pts=zone_pts)
+
+        # 카카오 알림
+        self.kakao = KakaoNotifier()
 
         # 통계
         self.total_visitors  = 0
@@ -630,6 +783,23 @@ class VisitorManager:
 
                 self.prev_x[tid] = cx_f
 
+                # ── 직원 여부 판단 (얼굴인식) ──
+                face_bbox = (bx1, by1, bx1+int(bw), by1+int(bh))
+                is_staff = self.face_manager.is_staff(frame, face_bbox)
+
+                # ── 도난 감지 (Gemini VLM) ──
+                theft_result = self.theft_detector.update(
+                    tid, cx_i, cy_i, frame, is_staff)
+                if theft_result:
+                    self.theft_count += 1
+                    msg = f"🚨 도난 의심! (ID:{tid})"
+                    self._add_alert(msg, (0, 0, 200))
+                    speak("도난이 의심됩니다 즉시 확인하세요")
+                    log_event("도난의심", f"ID={tid} Gemini판단")
+                    self.kakao.send("도난의심",
+                                    f"행거 구역에서 도난 의심 행동 감지 (ID:{tid})",
+                                    theft_result["frame"])
+
                 # ── 낙상 감지 ──
                 kps = kps_all[idx] if kps_all is not None and idx < len(kps_all) else None
                 if self.fall_detector.update(tid, kps, bw, bh):
@@ -637,6 +807,7 @@ class VisitorManager:
                     self._add_alert(f"🚨 낙상 감지! (ID:{tid})", (0, 0, 230))
                     speak("낙상이 감지되었습니다 즉시 확인하세요")
                     log_event("낙상감지", f"ID={tid}")
+                    self.kakao.send("낙상감지", f"매장 내 낙상 감지 (ID:{tid})", frame)
 
                 # ── 침입 구역 감지 ──
                 in_z = self._in_zone(cx_i, cy_i)
@@ -675,6 +846,7 @@ class VisitorManager:
             self.intrude_frames.pop(tid, None)
             self.theft_ids.discard(tid)
         self.fall_detector.cleanup(current_ids)
+        self.theft_detector.cleanup(current_ids)
 
         # ── 2) 화재/연기 감지 (적응형 기준선) ──
         fire, _, _, fire_r, smoke_r = detect_fire_smoke(frame)
@@ -699,12 +871,14 @@ class VisitorManager:
             self._add_alert("🔥 화재 감지!", (0, 40, 220))
             speak("화재가 감지되었습니다 즉시 대피하세요")
             log_event("화재감지")
+            self.kakao.send("화재감지", "매장 내 화재 감지! 즉시 대피하세요", frame)
         if smoke and self._fire_cd == 0:
             self._fire_cd = self.FIRE_CD
             self.fire_count += 1
             self._add_alert("💨 연기 감지!", (60, 60, 200))
             speak("연기가 감지되었습니다")
             log_event("연기감지")
+            self.kakao.send("연기감지", "매장 내 연기 감지!", frame)
         if self._fire_cd > 0:
             self._fire_cd -= 1
 

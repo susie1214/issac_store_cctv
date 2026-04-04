@@ -314,7 +314,9 @@ body{background:var(--bg);font-family:'Noto Sans KR',sans-serif;
 
 <!-- 하단 버튼 바 -->
 <div class="bottom-bar">
-  <button class="btn btn-report" onclick="makeReport()">📄 보고서</button>
+  <button class="btn btn-report" onclick="makeReport('daily')">📄 일별</button>
+  <button class="btn btn-report" onclick="makeReport('weekly')">📅 주간</button>
+  <button class="btn btn-report" onclick="makeReport('monthly')">📆 월간</button>
   <button class="btn btn-set" onclick="location.href='/settings'">⚙️ 설정</button>
   <button class="btn btn-icon" onclick="location.reload()">🔄</button>
 </div>
@@ -466,18 +468,29 @@ function showToast(text, color) {
 }
 
 // ── 보고서 ────────────────────────────────────
-async function makeReport() {
-  const btn = document.querySelector('.btn-report');
-  btn.textContent = '⏳ 생성 중...';
-  btn.disabled = true;
+const REPORT_LABELS = { daily: '📄 일별', weekly: '📅 주간', monthly: '📆 월간' };
+const REPORT_URLS   = { daily: '/api/report', weekly: '/api/report/weekly', monthly: '/api/report/monthly' };
+
+async function makeReport(type) {
+  const btns = document.querySelectorAll('.btn-report');
+  btns.forEach(b => b.disabled = true);
+  const btn = [...btns].find(b => b.textContent.includes(REPORT_LABELS[type].slice(2)));
+  if (btn) btn.textContent = '⏳ 생성 중...';
   try {
-    const r = await fetch('/api/report').then(r => r.json());
-    btn.textContent = r.ok ? '✅ 완료!' : '❌ 오류';
+    const r = await fetch(REPORT_URLS[type]).then(r => r.json());
+    if (btn) btn.textContent = r.ok ? '✅ 완료!' : '❌ 오류';
   } catch {
-    btn.textContent = '❌ 오류';
+    if (btn) btn.textContent = '❌ 오류';
   }
-  btn.disabled = false;
-  setTimeout(() => { btn.textContent = '📄 보고서'; }, 3000);
+  btns.forEach(b => b.disabled = false);
+  setTimeout(() => {
+    btns.forEach(b => {
+      const key = Object.keys(REPORT_LABELS).find(k => b.textContent.includes(REPORT_LABELS[k].slice(2)) || b.textContent.includes('완료') || b.textContent.includes('오류'));
+    });
+    document.querySelectorAll('.btn-report').forEach((b, i) => {
+      b.textContent = ['📄 일별','📅 주간','📆 월간'][i];
+    });
+  }, 3000);
 }
 </script>
 </body>

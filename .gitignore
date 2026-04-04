@@ -35,6 +35,9 @@ Thumbs.db
 .idea/
 *.swp
 
+# ── 환경변수 (API 키 등 절대 올리지 말 것) ────
+.env
+
 # ── Claude Code ───────────────────────────────
 .claude/
 

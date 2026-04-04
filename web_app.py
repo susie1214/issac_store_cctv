@@ -43,7 +43,8 @@ from fastapi.staticfiles import StaticFiles
 
 from visitor_manager import (
     VisitorManager, detect_fire_smoke,
-    generate_report, log_event, speak,
+    generate_report, generate_weekly_report, generate_monthly_report,
+    log_event, speak,
     _tts_worker, _tts_q, LOG_DIR,
     load_zone, save_zone, _event_log,
 )
@@ -483,6 +484,18 @@ async def api_report():
         return JSONResponse({"error": "카메라 미연결"})
     vm  = cam.vm
     rpt = generate_report(vm.total_visitors, vm.fire_count, vm.intrusion_count)
+    return JSONResponse({"path": str(rpt), "ok": True})
+
+
+@app.get("/api/report/weekly")
+async def api_report_weekly():
+    rpt = generate_weekly_report()
+    return JSONResponse({"path": str(rpt), "ok": True})
+
+
+@app.get("/api/report/monthly")
+async def api_report_monthly():
+    rpt = generate_monthly_report()
     return JSONResponse({"path": str(rpt), "ok": True})
 
 
