@@ -19,8 +19,8 @@ ONNX → RKNN 변환 스크립트 (OrangePi 5 Ultra / RK3588)
   pip install rknn-toolkit-lite2     # 경량 추론 전용
 
 실행:
-  python convert_to_rknn.py                  # 기본 (yolo11n.onnx + yolov8n-pose.onnx)
-  python convert_to_rknn.py --model yolo11n  # 특정 모델만
+  python convert_to_rknn.py                  # yolov8n-pose.onnx 변환 (이것만 있으면 됨)
+  python convert_to_rknn.py --no-quantize    # FP16 모드 (calibration 이미지 없어도 OK)
 """
 
 from __future__ import annotations
@@ -32,13 +32,8 @@ from pathlib import Path
 
 # ── 변환할 모델 목록 ──────────────────────────────
 MODELS = {
-    "yolo11n": {
-        "onnx":         "yolo11n.onnx",
-        "rknn":         "models/yolo11n.rknn",
-        "input_size":   [1, 3, 640, 640],   # NCHW
-        "mean_values":  [[0, 0, 0]],
-        "std_values":   [[255, 255, 255]],
-    },
+    # yolov8n-pose: 사람 감지 + 17개 관절 keypoint 동시 출력
+    # → 피플카운팅 + 낙상감지 모두 처리 (이 모델 하나로 충분)
     "yolov8n-pose": {
         "onnx":         "yolov8n-pose.onnx",
         "rknn":         "models/yolov8n_pose.rknn",
@@ -142,8 +137,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="ONNX → RKNN 변환 (OrangePi RK3588용)",
     )
-    parser.add_argument("--model", choices=list(MODELS.keys()) + ["all"],
-                        default="all", help="변환할 모델 (기본: all)")
+    parser.add_argument("--model", choices=list(MODELS.keys()),
+                        default="yolov8n-pose", help="변환할 모델 (기본: yolov8n-pose)")
     parser.add_argument("--no-quantize", action="store_true",
                         help="INT8 양자화 건너뜀 (FP16 모드)")
     args = parser.parse_args()
@@ -159,7 +154,7 @@ def main():
             quantize = False
             print("  자동으로 FP16 모드로 전환합니다.\n")
 
-    targets = list(MODELS.keys()) if args.model == "all" else [args.model]
+    targets = [args.model]
     results = {}
     for key in targets:
         out = convert(key, quantize=quantize)
