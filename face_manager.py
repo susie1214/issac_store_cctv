@@ -19,12 +19,14 @@ import numpy as np
 ENCODINGS_FILE = Path("models/face_encodings.pkl")
 SIM_THRESHOLD  = 0.75   # 얼굴 유사도 임계값 (높을수록 엄격)
 
-# OpenCV 내장 얼굴 감지 — 한글 경로 우회: C:/tmp 에 복사
-import shutil
+# OpenCV 내장 얼굴 감지 — 한글 경로 우회 (Windows: C:/tmp, Linux: /tmp)
+import shutil, sys
 _CASCADE_SRC  = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-_CASCADE_PATH = "C:/tmp/haarcascade_frontalface_default.xml"
+_CASCADE_PATH = ("C:/tmp/haarcascade_frontalface_default.xml"
+                 if sys.platform == "win32"
+                 else "/tmp/haarcascade_frontalface_default.xml")
 if not Path(_CASCADE_PATH).exists():
-    Path("C:/tmp").mkdir(exist_ok=True)
+    Path(_CASCADE_PATH).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(_CASCADE_SRC, _CASCADE_PATH)
 
 

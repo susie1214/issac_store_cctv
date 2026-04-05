@@ -107,25 +107,59 @@ _ENTER_SOUND = _AUDIO_DIR / "어서오세요.m4a"
 _EXIT_SOUND  = _AUDIO_DIR / "안녕히가세요.m4a"
 
 def _play_audio_async(path: Path):
-    """PowerShell WMP로 오디오 파일을 백그라운드 스레드에서 재생"""
+    """오디오 파일 재생 — pygame(Linux/OrangePi) 우선, Windows는 PowerShell"""
     def _play():
         try:
-            import subprocess
-            abs_path = str(path.resolve())
-            ps_cmd = (
-                f"Add-Type -AssemblyName presentationCore; "
-                f"$p = New-Object system.windows.media.mediaplayer; "
-                f"$p.open([uri]'{abs_path}'); "
-                f"$p.Play(); "
-                f"Start-Sleep 5; "
-                f"$p.Stop()"
-            )
-            subprocess.run(
-                ["powershell", "-Command", ps_cmd],
-                capture_output=True, timeout=8
-            )
+            if sys.platform == "win32":
+                import subprocess
+                abs_path = str(path.resolve())
+                ps_cmd = (
+                    f"Add-Type -AssemblyName presentationCore; "
+                    f"$p = New-Object system.windows.media.mediaplayer; "
+                    f"$p.open([uri]'{abs_path}'); "
+                    f"$p.Play(); "
+                    f"Start-Sleep 5; "
+                    f"$p.Stop()"
+                )
+                subprocess.run(["powershell", "-Command", ps_cmd],
+                               capture_output=True, timeout=8)
+            else:
+                import pygame
+                pygame.mixer.init()
+                pygame.mixer.music.load(str(path))
+                pygame.mixer.music.play()
+                while pygame.mixer.music.get_busy():
+                    time.sleep(0.1)
         except Exception as e:
             logger.warning(f"오디오 재생 오류: {e}")
+    threading.Thread(target=_play, daemon=True).start()
+
+
+def _beep_async(pattern: list[tuple[float, float]]):
+    """
+    크로스플랫폼 비프음 — (주파수Hz, 지속ms) 리스트
+    Windows: winsound, Linux: pygame sine wave 생성
+    """
+    def _play():
+        try:
+            if sys.platform == "win32":
+                import winsound
+                for freq, dur in pattern:
+                    winsound.Beep(int(freq), int(dur))
+                    time.sleep(0.05)
+            else:
+                import numpy as np_
+                import pygame
+                pygame.mixer.init(frequency=44100, size=-16, channels=1)
+                for freq, dur in pattern:
+                    frames = int(44100 * dur / 1000)
+                    t = np_.linspace(0, dur / 1000, frames, False)
+                    wave = (np_.sin(2 * np_.pi * freq * t) * 32767).astype(np_.int16)
+                    sound = pygame.sndarray.make_sound(wave)
+                    sound.play()
+                    pygame.time.wait(int(dur) + 50)
+        except Exception as e:
+            logger.warning(f"비프음 오류: {e}")
     threading.Thread(target=_play, daemon=True).start()
 
 
@@ -149,25 +183,28 @@ def play_exit():
 _theft_alarm_active = False
 
 def play_theft_alarm():
-    """도난 알람: 시끄러운 비프음 5회 반복 (비동기)"""
+    """도난 알람: 긴급 경보음 (도난 특화 — 높고 짧은 비프 반복)"""
     global _theft_alarm_active
     if _theft_alarm_active:
         return
+    _theft_alarm_active = True
     def _alarm():
         global _theft_alarm_active
-        _theft_alarm_active = True
-        try:
-            import winsound
-            for _ in range(5):
-                winsound.Beep(2800, 180)
-                time.sleep(0.07)
-                winsound.Beep(2200, 180)
-                time.sleep(0.07)
-        except Exception:
-            pass
+        # 높은 주파수 교차 5회 — 귀에 잘 들리는 경보 패턴
+        pattern = [(2800, 180), (2200, 180)] * 5
+        _beep_async(pattern)
+        time.sleep(2)
         _theft_alarm_active = False
     threading.Thread(target=_alarm, daemon=True).start()
-    logger.warning("도난 알람 발동!")
+    logger.warning("🚨 도난 알람 발동!")
+
+
+def play_fire_alarm():
+    """화재/연기 알람: 소방 경보 패턴 (단속음 반복)"""
+    # 소방 경보 특유의 단속 패턴 (높음-짧은침묵 반복)
+    pattern = [(3000, 300), (0, 100)] * 6
+    _beep_async(pattern)
+    logger.warning("🔥 화재 알람 발동!")
 
 
 # ──────────────────────────────────────────────
@@ -307,111 +344,224 @@ def log_event(etype: str, detail: str = ""):
         w.writerow(row)
 
 
-def generate_report(total_visitors: int, fire_count: int, intrusion_count: int):
-    """HTML 일별 보고서 자동 생성"""
-    now = datetime.now()
-    today = now.strftime("%Y년 %m월 %d일")
-    fname = LOG_DIR / f"report_{now.strftime('%Y%m%d_%H%M%S')}.html"
+def _linear_trend(values: list) -> list:
+    """단순 선형회귀 추세선 계산"""
+    n = len(values)
+    if n < 2:
+        return values[:]
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(values) / n
+    denom = sum((x - mx) ** 2 for x in xs) or 1
+    slope = sum((xs[i] - mx) * (values[i] - my) for i in range(n)) / denom
+    intercept = my - slope * mx
+    return [round(intercept + slope * x, 2) for x in xs]
 
-    # 시간대별 입장 집계
-    hourly: dict[int, int] = defaultdict(int)
-    for e in _event_log:
-        if e["type"] == "입장":
-            try:
-                h = int(e["time"].split(":")[0])
-                hourly[h] += 1
-            except Exception:
-                pass
 
-    bars = ""
-    for h in range(9, 22):
-        cnt = hourly.get(h, 0)
-        pct = min(cnt * 10, 100)
-        bars += f"""
-        <div class="bar-row">
-          <span class="bar-label">{h:02d}시</span>
-          <div class="bar-bg"><div class="bar-fill" style="width:{pct}%"></div></div>
-          <span class="bar-val">{cnt}명</span>
-        </div>"""
+def _report_html(title: str, subtitle: str, labels: list, visitor_data: list,
+                 kpis: list, event_rows_html: str, donut_data: dict) -> str:
+    """Chart.js 기반 공통 HTML 리포트 생성"""
+    trend = _linear_trend(visitor_data)
+    labels_js    = str(labels)
+    visitors_js  = str(visitor_data)
+    trend_js     = str(trend)
+    donut_labels = str(list(donut_data.keys()))
+    donut_values = str(list(donut_data.values()))
+    donut_colors = str([
+        "#e53e3e","#e07800","#9b2335","#6b21a8","#1a6fd4","#059669"
+    ][:len(donut_data)])
 
-    event_rows = "".join(
-        f'<tr><td>{e["time"]}</td><td class="et-{e["type"]}">{e["type"]}</td><td>{e["detail"]}</td></tr>'
-        for e in _event_log[-50:]
-    )
+    kpi_html = ""
+    for num, label, color in kpis:
+        kpi_html += f"""
+      <div class="card">
+        <div class="card-num" style="color:{color}">{num}</div>
+        <div class="card-label">{label}</div>
+      </div>"""
 
-    html = f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>매장 일일 보고서 – {today}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-  body {{ font-family: '맑은 고딕', sans-serif; background:#f4f6f8; margin:0; padding:24px; color:#222; }}
-  h1   {{ font-size:22px; margin-bottom:4px; }}
-  .sub {{ color:#888; font-size:13px; margin-bottom:24px; }}
-  .cards {{ display:flex; gap:16px; margin-bottom:28px; flex-wrap:wrap; }}
-  .card {{ background:#fff; border-radius:10px; padding:20px 28px; min-width:160px;
-            box-shadow:0 2px 8px rgba(0,0,0,.08); }}
-  .card-num  {{ font-size:38px; font-weight:700; }}
-  .card-label{{ font-size:13px; color:#777; margin-top:4px; }}
-  .card.blue  .card-num {{ color:#1a6fd4; }}
-  .card.red   .card-num {{ color:#e53e3e; }}
-  .card.orange.card-num {{ color:#e07800; }}
-  h2 {{ font-size:15px; font-weight:700; margin-bottom:10px; border-left:4px solid #1a6fd4;
-        padding-left:10px; }}
-  .bar-row  {{ display:flex; align-items:center; gap:8px; margin-bottom:5px; font-size:13px; }}
-  .bar-label{{ width:36px; color:#555; }}
-  .bar-bg   {{ flex:1; background:#eee; border-radius:4px; height:16px; }}
-  .bar-fill {{ background:#1a6fd4; height:100%; border-radius:4px; transition:.3s; }}
-  .bar-val  {{ width:32px; text-align:right; color:#333; }}
-  table {{ width:100%; border-collapse:collapse; background:#fff;
-           border-radius:10px; overflow:hidden;
-           box-shadow:0 2px 8px rgba(0,0,0,.08); font-size:13px; }}
-  th {{ background:#222; color:#fff; padding:9px 14px; text-align:left; }}
-  td {{ padding:8px 14px; border-bottom:1px solid #f0f0f0; }}
-  .et-입장    {{ color:#1a6fd4; font-weight:700; }}
-  .et-퇴장    {{ color:#888; }}
-  .et-침입감지{{ color:#e07800; font-weight:700; }}
-  .et-화재감지{{ color:#e53e3e; font-weight:700; }}
-  .et-연기감지{{ color:#c0392b; font-weight:700; }}
-  .footer {{ text-align:center; color:#bbb; font-size:12px; margin-top:24px; }}
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:'맑은 고딕',sans-serif;background:#f0f2f5;color:#1a1a2e;padding:20px}}
+  .header{{background:linear-gradient(135deg,#1a6fd4,#0d47a1);color:#fff;
+           border-radius:14px;padding:22px 28px;margin-bottom:20px}}
+  .header h1{{font-size:20px;font-weight:700;margin-bottom:4px}}
+  .header p{{font-size:12px;opacity:.8}}
+  .cards{{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}}
+  .card{{background:#fff;border-radius:12px;padding:18px 22px;flex:1;min-width:130px;
+         box-shadow:0 2px 12px rgba(0,0,0,.07)}}
+  .card-num{{font-size:36px;font-weight:800;line-height:1}}
+  .card-label{{font-size:12px;color:#888;margin-top:6px}}
+  .section{{background:#fff;border-radius:12px;padding:20px;
+            box-shadow:0 2px 12px rgba(0,0,0,.07);margin-bottom:20px}}
+  .section h2{{font-size:14px;font-weight:700;margin-bottom:16px;
+               padding-left:10px;border-left:4px solid #1a6fd4;color:#333}}
+  .charts{{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:20px}}
+  @media(max-width:600px){{.charts{{grid-template-columns:1fr}}}}
+  .chart-box{{background:#fff;border-radius:12px;padding:20px;
+              box-shadow:0 2px 12px rgba(0,0,0,.07)}}
+  .chart-box h2{{font-size:14px;font-weight:700;margin-bottom:14px;
+                 padding-left:10px;border-left:4px solid #1a6fd4;color:#333}}
+  table{{width:100%;border-collapse:collapse;font-size:12px}}
+  th{{background:#1a1a2e;color:#fff;padding:10px 12px;text-align:left;font-weight:600}}
+  td{{padding:8px 12px;border-bottom:1px solid #f0f0f0}}
+  tr:hover td{{background:#f8faff}}
+  .et-입장{{color:#1a6fd4;font-weight:700}}
+  .et-퇴장{{color:#aaa}}
+  .et-침입감지{{color:#e07800;font-weight:700}}
+  .et-화재감지{{color:#e53e3e;font-weight:700}}
+  .et-연기감지{{color:#c0392b;font-weight:700}}
+  .et-도난의심{{color:#9b2335;font-weight:700}}
+  .et-낙상감지{{color:#6b21a8;font-weight:700}}
+  .et-소리감지{{color:#059669;font-weight:700}}
+  .footer{{text-align:center;color:#bbb;font-size:11px;margin-top:16px;padding-bottom:10px}}
 </style>
 </head>
 <body>
-<h1>매장 일일 운영 보고서</h1>
-<div class="sub">생성일시: {now.strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp; ㈜싱스웰 방문객 관리 시스템</div>
+<div class="header">
+  <h1>{title}</h1>
+  <p>{subtitle} &nbsp;|&nbsp; ThingsWell AI Monitor</p>
+</div>
 
-<div class="cards">
-  <div class="card blue">
-    <div class="card-num">{total_visitors}</div>
-    <div class="card-label">오늘 총 방문객 (명)</div>
+<div class="cards">{kpi_html}
+</div>
+
+<div class="charts">
+  <div class="chart-box">
+    <h2>방문객 추이 &amp; 추세선</h2>
+    <canvas id="lineChart" height="180"></canvas>
   </div>
-  <div class="card red">
-    <div class="card-num">{fire_count}</div>
-    <div class="card-label">화재/연기 감지 (건)</div>
-  </div>
-  <div class="card" style="border-left:4px solid #e07800;">
-    <div class="card-num" style="color:#e07800;">{intrusion_count}</div>
-    <div class="card-label">침입 감지 (건)</div>
+  <div class="chart-box">
+    <h2>이벤트 분포</h2>
+    <canvas id="donutChart" height="180"></canvas>
   </div>
 </div>
 
-<h2>시간대별 방문객 현황</h2>
-<div style="background:#fff;border-radius:10px;padding:18px 22px;
-            box-shadow:0 2px 8px rgba(0,0,0,.08);margin-bottom:28px;">
-{bars}
+<div class="section">
+  <h2>이벤트 로그 (최근 100건)</h2>
+  <table>
+    <tr><th>날짜</th><th>시간</th><th>이벤트</th><th>내용</th></tr>
+    {event_rows_html}
+  </table>
 </div>
+<div class="footer">ThingsWell Visitor Management System v2.0 &nbsp;|&nbsp; 생성: {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 
-<h2>이벤트 로그 (최근 50건)</h2>
-<table>
-  <tr><th>시간</th><th>이벤트</th><th>내용</th></tr>
-  {event_rows}
-</table>
-<div class="footer">ThingsWell Visitor Management System v2.0</div>
+<script>
+// ── 방문객 추이 + 추세선 ──
+new Chart(document.getElementById('lineChart'), {{
+  data: {{
+    labels: {labels_js},
+    datasets: [
+      {{
+        type: 'bar',
+        label: '방문객',
+        data: {visitors_js},
+        backgroundColor: 'rgba(26,111,212,0.25)',
+        borderColor: '#1a6fd4',
+        borderWidth: 1.5,
+        borderRadius: 4,
+        order: 2,
+      }},
+      {{
+        type: 'line',
+        label: '추세선',
+        data: {trend_js},
+        borderColor: '#e53e3e',
+        borderWidth: 2.5,
+        borderDash: [6,3],
+        pointRadius: 0,
+        tension: 0.4,
+        fill: false,
+        order: 1,
+      }}
+    ]
+  }},
+  options: {{
+    responsive: true,
+    plugins: {{
+      legend: {{ position: 'top', labels: {{ font: {{ size: 11 }} }} }},
+      tooltip: {{ mode: 'index' }}
+    }},
+    scales: {{
+      y: {{ beginAtZero: true, ticks: {{ stepSize: 1 }} }},
+      x: {{ ticks: {{ font: {{ size: 10 }} }} }}
+    }}
+  }}
+}});
+
+// ── 이벤트 도넛 ──
+new Chart(document.getElementById('donutChart'), {{
+  type: 'doughnut',
+  data: {{
+    labels: {donut_labels},
+    datasets: [{{ data: {donut_values}, backgroundColor: {donut_colors}, borderWidth: 2 }}]
+  }},
+  options: {{
+    responsive: true,
+    plugins: {{
+      legend: {{ position: 'bottom', labels: {{ font: {{ size: 10 }}, padding: 8 }} }}
+    }}
+  }}
+}});
+</script>
 </body></html>"""
+
+
+def generate_report(total_visitors: int, fire_count: int, intrusion_count: int):
+    """HTML 일별 보고서 — Chart.js 추세선 포함"""
+    now  = datetime.now()
+    fname = LOG_DIR / f"report_{now.strftime('%Y%m%d_%H%M%S')}.html"
+
+    # 시간대별 집계
+    hourly: dict[int, int] = defaultdict(int)
+    event_types: dict[str, int] = defaultdict(int)
+    for e in _event_log:
+        event_types[e["type"]] += 1
+        if e["type"] == "입장":
+            try:
+                hourly[int(e["time"].split(":")[0])] += 1
+            except Exception:
+                pass
+
+    labels  = [f"{h:02d}시" for h in range(9, 22)]
+    visitors = [hourly.get(h, 0) for h in range(9, 22)]
+
+    theft_count = event_types.get("도난의심", 0)
+    fall_count  = event_types.get("낙상감지", 0)
+
+    kpis = [
+        (total_visitors, "총 방문객 (명)",    "#1a6fd4"),
+        (fire_count,     "화재/연기 (건)",    "#e53e3e"),
+        (intrusion_count,"침입 감지 (건)",    "#e07800"),
+        (theft_count,    "도난 의심 (건)",    "#9b2335"),
+        (fall_count,     "낙상 감지 (건)",    "#6b21a8"),
+    ]
+
+    donut = {k: v for k, v in event_types.items() if v > 0}
+    if not donut:
+        donut = {"데이터 없음": 1}
+
+    event_rows_html = "".join(
+        f'<tr><td>{e.get("date","")}</td><td>{e["time"]}</td>'
+        f'<td class="et-{e["type"]}">{e["type"]}</td><td>{e.get("detail","")}</td></tr>'
+        for e in reversed(_event_log[-100:])
+    )
+
+    html = _report_html(
+        title=f"매장 일일 보고서 — {now.strftime('%Y년 %m월 %d일')}",
+        subtitle=now.strftime("%Y년 %m월 %d일"),
+        labels=labels, visitor_data=visitors,
+        kpis=kpis, event_rows_html=event_rows_html, donut_data=donut,
+    )
 
     fname.write_text(html, encoding="utf-8")
     logger.info(f"보고서 저장: {fname}")
-    # 브라우저 자동 열기
     try:
         os.startfile(str(fname))
     except Exception:
@@ -428,107 +578,62 @@ def _load_csv_range(start_date: datetime, end_date: datetime) -> list[dict]:
         if csv_path.exists():
             with open(csv_path, newline="", encoding="utf-8-sig") as f:
                 rows.extend(list(csv.DictReader(f)))
-        cur = cur.replace(day=cur.day + 1) if cur.day < 28 else \
-              (cur.replace(month=cur.month + 1, day=1) if cur.month < 12
-               else cur.replace(year=cur.year + 1, month=1, day=1))
+        cur += timedelta(days=1)
     return rows
 
 
 def _make_period_report(rows: list[dict], title: str, subtitle: str) -> Path:
-    """공통 HTML 보고서 (일별 방문객 막대 + 이벤트 표)"""
+    """주간/월간 공통 HTML 보고서 — Chart.js 추세선 + 도넛 차트"""
     from collections import Counter
     now = datetime.now()
     fname = LOG_DIR / f"report_{now.strftime('%Y%m%d_%H%M%S')}.html"
 
-    # 날짜별 입장 집계
+    # 날짜별 입장 집계 (정렬된 날짜 순서 유지)
     daily: dict[str, int] = Counter(
         e["date"] for e in rows if e.get("type") == "입장"
     )
-    total = sum(daily.values())
+    sorted_dates = sorted(daily.keys())
 
-    fire_cnt     = sum(1 for e in rows if e.get("type") == "화재감지")
-    smoke_cnt    = sum(1 for e in rows if e.get("type") == "연기감지")
-    intrude_cnt  = sum(1 for e in rows if e.get("type") == "침입감지")
-    theft_cnt    = sum(1 for e in rows if e.get("type") == "도난의심")
-    fall_cnt     = sum(1 for e in rows if e.get("type") == "낙상감지")
+    fire_cnt    = sum(1 for e in rows if e.get("type") == "화재감지")
+    smoke_cnt   = sum(1 for e in rows if e.get("type") == "연기감지")
+    intrude_cnt = sum(1 for e in rows if e.get("type") == "침입감지")
+    theft_cnt   = sum(1 for e in rows if e.get("type") == "도난의심")
+    fall_cnt    = sum(1 for e in rows if e.get("type") == "낙상감지")
+    total       = sum(daily.values())
 
-    bars = ""
-    for date_str in sorted(daily.keys()):
-        cnt = daily[date_str]
-        pct = min(cnt * 5, 100)
-        label = date_str[5:]  # MM-DD
-        bars += f"""
-        <div class="bar-row">
-          <span class="bar-label">{label}</span>
-          <div class="bar-bg"><div class="bar-fill" style="width:{pct}%"></div></div>
-          <span class="bar-val">{cnt}명</span>
-        </div>"""
+    # 차트 데이터: MM/DD 레이블, 날짜별 방문객 수
+    labels   = [d[5:] for d in sorted_dates]   # YYYY-MM-DD → MM-DD
+    visitors = [daily[d] for d in sorted_dates]
+    if not labels:
+        labels, visitors = ["데이터 없음"], [0]
 
-    event_rows = "".join(
+    kpis = [
+        (total,               "총 방문객 (명)",  "#1a6fd4"),
+        (fire_cnt + smoke_cnt,"화재/연기 (건)",  "#e53e3e"),
+        (intrude_cnt,         "침입 감지 (건)",  "#e07800"),
+        (theft_cnt,           "도난 의심 (건)",  "#9b2335"),
+        (fall_cnt,            "낙상 감지 (건)",  "#6b21a8"),
+    ]
+
+    # 이벤트 유형 분포 (도넛 차트용)
+    event_types: dict[str, int] = defaultdict(int)
+    for e in rows:
+        if e.get("type"):
+            event_types[e["type"]] += 1
+    donut = {k: v for k, v in event_types.items() if v > 0} or {"데이터 없음": 1}
+
+    event_rows_html = "".join(
         f'<tr><td>{e.get("date","")}</td><td>{e.get("time","")}</td>'
         f'<td class="et-{e.get("type","")}">{e.get("type","")}</td>'
         f'<td>{e.get("detail","")}</td></tr>'
         for e in rows[-100:]
     )
 
-    html = f"""<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="UTF-8">
-<title>{title}</title>
-<style>
-  body {{ font-family: '맑은 고딕', sans-serif; background:#f4f6f8; margin:0; padding:24px; color:#222; }}
-  h1   {{ font-size:22px; margin-bottom:4px; }}
-  .sub {{ color:#888; font-size:13px; margin-bottom:24px; }}
-  .cards {{ display:flex; gap:12px; margin-bottom:28px; flex-wrap:wrap; }}
-  .card {{ background:#fff; border-radius:10px; padding:16px 22px; min-width:130px;
-            box-shadow:0 2px 8px rgba(0,0,0,.08); }}
-  .card-num  {{ font-size:34px; font-weight:700; color:#1a6fd4; }}
-  .card-label{{ font-size:12px; color:#777; margin-top:4px; }}
-  h2 {{ font-size:15px; font-weight:700; margin-bottom:10px; border-left:4px solid #1a6fd4; padding-left:10px; }}
-  .bar-row  {{ display:flex; align-items:center; gap:8px; margin-bottom:5px; font-size:12px; }}
-  .bar-label{{ width:44px; color:#555; }}
-  .bar-bg   {{ flex:1; background:#eee; border-radius:4px; height:14px; }}
-  .bar-fill {{ background:#1a6fd4; height:100%; border-radius:4px; }}
-  .bar-val  {{ width:36px; text-align:right; color:#333; }}
-  table {{ width:100%; border-collapse:collapse; background:#fff;
-           border-radius:10px; overflow:hidden;
-           box-shadow:0 2px 8px rgba(0,0,0,.08); font-size:12px; }}
-  th {{ background:#222; color:#fff; padding:8px 12px; text-align:left; }}
-  td {{ padding:7px 12px; border-bottom:1px solid #f0f0f0; }}
-  .et-입장    {{ color:#1a6fd4; font-weight:700; }}
-  .et-화재감지{{ color:#e53e3e; font-weight:700; }}
-  .et-침입감지{{ color:#e07800; font-weight:700; }}
-  .et-도난의심{{ color:#9b2335; font-weight:700; }}
-  .et-낙상감지{{ color:#6b21a8; font-weight:700; }}
-  .footer {{ text-align:center; color:#bbb; font-size:12px; margin-top:24px; }}
-</style>
-</head>
-<body>
-<h1>{title}</h1>
-<div class="sub">{subtitle} &nbsp;|&nbsp; 생성: {now.strftime('%Y-%m-%d %H:%M:%S')}</div>
-
-<div class="cards">
-  <div class="card"><div class="card-num">{total}</div><div class="card-label">총 방문객 (명)</div></div>
-  <div class="card"><div class="card-num" style="color:#e53e3e">{fire_cnt+smoke_cnt}</div><div class="card-label">화재/연기 (건)</div></div>
-  <div class="card"><div class="card-num" style="color:#e07800">{intrude_cnt}</div><div class="card-label">침입 감지 (건)</div></div>
-  <div class="card"><div class="card-num" style="color:#9b2335">{theft_cnt}</div><div class="card-label">도난 의심 (건)</div></div>
-  <div class="card"><div class="card-num" style="color:#6b21a8">{fall_cnt}</div><div class="card-label">낙상 감지 (건)</div></div>
-</div>
-
-<h2>날짜별 방문객 현황</h2>
-<div style="background:#fff;border-radius:10px;padding:16px 20px;
-            box-shadow:0 2px 8px rgba(0,0,0,.08);margin-bottom:28px;">
-{bars if bars else "<p style='color:#aaa;font-size:13px'>데이터 없음</p>"}
-</div>
-
-<h2>이벤트 로그 (최근 100건)</h2>
-<table>
-  <tr><th>날짜</th><th>시간</th><th>이벤트</th><th>내용</th></tr>
-  {event_rows}
-</table>
-<div class="footer">ThingsWell Visitor Management System v2.0</div>
-</body></html>"""
+    html = _report_html(
+        title=title, subtitle=subtitle,
+        labels=labels, visitor_data=visitors,
+        kpis=kpis, event_rows_html=event_rows_html, donut_data=donut,
+    )
 
     fname.write_text(html, encoding="utf-8")
     logger.info(f"보고서 저장: {fname}")
@@ -582,38 +687,70 @@ def load_zone() -> list:
 # ──────────────────────────────────────────────
 #  화재 / 연기 감지 (HSV 색상 기반)
 # ──────────────────────────────────────────────
+FIRE_TH        = 0.005  # 화재 픽셀 비율 임계값 (움직임 필터 적용 기준)
+SMOKE_TH       = 0.50   # 연기 절대 임계값 (적응형 기준선과 함께 사용)
+FIRE_CONFIRM_F = 10     # 연속 N프레임 이상 감지 시에만 알람 (오탐 방지)
+CEIL_RATIO     = 0.30   # 화면 상단 N% 는 천장 조명으로 간주, 화재 분석 제외
+
+
 def detect_fire_smoke(frame: np.ndarray) -> tuple[bool, bool, np.ndarray, float, float]:
     """
     HSV 색상 분석으로 화재/연기 감지.
-    Returns: (fire_detected, smoke_detected, debug_mask, fire_ratio, smoke_ratio)
+    Returns: (fire_candidate, smoke_candidate, debug_mask, fire_ratio, smoke_ratio)
 
-    ※ smoke_detected는 절대 임계값만 반환 — 적응형 판단은 VisitorManager에서 수행.
+    ※ 연속 프레임 확인(FIRE_CONFIRM_F)은 VisitorManager에서 수행.
+    ※ smoke_candidate는 절대 임계값만 반환 — 적응형 판단은 VisitorManager에서 수행.
     """
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    h, w = frame.shape[:2]
 
-    # 화재: 주황~빨강, 고채도·고명도
-    fire_lo1 = np.array([0,  150, 150])
-    fire_hi1 = np.array([20, 255, 255])
-    fire_lo2 = np.array([160, 150, 150])
+    # ── 천장 조명 제외: 상단 CEIL_RATIO 영역 마스킹 ──
+    roi_top = int(h * CEIL_RATIO)
+    roi = frame[roi_top:, :]          # 하단 70% 만 분석
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+    # ── 화재: 주황~노랑~빨강 (채도·명도 완화, 더 넓은 화염 색 포괄) ──
+    # 낮 밝기 형광등 아래에서도 감지되도록 채도 기준 낮춤 (150 → 110)
+    fire_lo1 = np.array([0,  110, 140])   # 빨강~주황
+    fire_hi1 = np.array([25, 255, 255])
+    fire_lo2 = np.array([155, 110, 140])  # 보라~빨강 (역방향)
     fire_hi2 = np.array([180, 255, 255])
-    fire_mask = (cv2.inRange(hsv, fire_lo1, fire_hi1) |
-                 cv2.inRange(hsv, fire_lo2, fire_hi2))
-    fire_mask = cv2.morphologyEx(fire_mask, cv2.MORPH_OPEN,
-                                  np.ones((5, 5), np.uint8))
-    fire_ratio = cv2.countNonZero(fire_mask) / fire_mask.size
+    fire_mask_roi = (cv2.inRange(hsv, fire_lo1, fire_hi1) |
+                     cv2.inRange(hsv, fire_lo2, fire_hi2))
 
-    # 연기: 낮은 채도 + 중간 명도 (밝은 흰색 벽 제외: V < 175)
+    # 노이즈 제거: morphology open (작은 점 제거)
+    fire_mask_roi = cv2.morphologyEx(
+        fire_mask_roi, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+
+    # 불꽃 형태 검증: 픽셀 덩어리(contour)가 충분히 커야 함 (조명 반사 제거)
+    contours, _ = cv2.findContours(
+        fire_mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    valid_fire_mask = np.zeros_like(fire_mask_roi)
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < 300:          # 300px 미만 작은 점 제거 (조명 반사)
+            continue
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        aspect = bh / (bw + 1e-6)
+        if aspect < 0.3:        # 너무 납작한 가로 픽셀 → 조명 반사
+            continue
+        cv2.drawContours(valid_fire_mask, [cnt], -1, 255, -1)
+
+    fire_ratio = cv2.countNonZero(valid_fire_mask) / max(valid_fire_mask.size, 1)
+
+    # 전체 프레임 크기 기준 debug_mask 생성 (상단 빈 영역 포함)
+    fire_mask_full = np.zeros((h, w), dtype=np.uint8)
+    fire_mask_full[roi_top:, :] = valid_fire_mask
+
+    # ── 연기: 낮은 채도 + 중간 명도 ──
+    hsv_full = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     smoke_lo = np.array([0,   0,  60])
-    smoke_hi = np.array([180, 45, 175])   # V 상한 낮춤 → 흰 벽 제외
-    smoke_mask = cv2.inRange(hsv, smoke_lo, smoke_hi)
-    smoke_mask = cv2.morphologyEx(smoke_mask, cv2.MORPH_OPEN,
-                                   np.ones((9, 9), np.uint8))
-    smoke_ratio = cv2.countNonZero(smoke_mask) / smoke_mask.size
+    smoke_hi = np.array([180, 45, 175])
+    smoke_mask = cv2.inRange(hsv_full, smoke_lo, smoke_hi)
+    smoke_mask = cv2.morphologyEx(
+        smoke_mask, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+    smoke_ratio = cv2.countNonZero(smoke_mask) / max(smoke_mask.size, 1)
 
-    FIRE_TH  = 0.04   # 4% 이상
-    SMOKE_TH = 0.50   # 절대 임계값 50% (적응형 기준선과 함께 사용)
-
-    return fire_ratio > FIRE_TH, smoke_ratio > SMOKE_TH, fire_mask, fire_ratio, smoke_ratio
+    return fire_ratio > FIRE_TH, smoke_ratio > SMOKE_TH, fire_mask_full, fire_ratio, smoke_ratio
 
 
 # ──────────────────────────────────────────────
@@ -669,14 +806,17 @@ class VisitorManager:
         self._alerts: deque = deque(maxlen=4)   # (text, color, timer)
         self._event_timer: dict[str, int] = {}
 
-        # 화재/연기 쿨다운
-        self._fire_cd  = 0
-        self._smoke_cd = 0
-        self.FIRE_CD   = 150   # 프레임
+        # 화재/연기 쿨다운 + 연속 프레임 카운터
+        self._fire_cd      = 0
+        self._smoke_cd     = 0
+        self.FIRE_CD       = 150   # 프레임
+        self._fire_consec  = 0    # 연속 화재 감지 프레임 수
+        self._smoke_consec = 0    # 연속 연기 감지 프레임 수
 
         # 연기 적응형 기준선 (처음 60프레임은 배경 학습)
         self._smoke_history: deque = deque(maxlen=120)  # 최근 120프레임 비율 저장
         self._smoke_baseline = 0.0
+        self._prev_gray: np.ndarray | None = None      # 움직임 필터용 이전 프레임
 
         logger.info(f"초기화 완료 | 수직 경계선={line_ratio:.0%} "
                     f"| 침입구역={len(self.zone_pts)}점")
@@ -794,6 +934,7 @@ class VisitorManager:
                     self.theft_count += 1
                     msg = f"🚨 도난 의심! (ID:{tid})"
                     self._add_alert(msg, (0, 0, 200))
+                    play_theft_alarm()
                     speak("도난이 의심됩니다 즉시 확인하세요")
                     log_event("도난의심", f"ID={tid} Gemini판단")
                     self.kakao.send("도난의심",
@@ -848,8 +989,22 @@ class VisitorManager:
         self.fall_detector.cleanup(current_ids)
         self.theft_detector.cleanup(current_ids)
 
-        # ── 2) 화재/연기 감지 (적응형 기준선) ──
-        fire, _, _, fire_r, smoke_r = detect_fire_smoke(frame)
+        # ── 2) 화재/연기 감지 (색상 + 움직임 필터) ──
+        fire_color, _, _, _, smoke_r = detect_fire_smoke(frame)
+
+        # 움직임 필터: 화재 색상 영역이 실제로 움직이는지 확인
+        h_f = frame.shape[0]
+        roi_top_f = int(h_f * CEIL_RATIO)
+        gray_roi_f = cv2.cvtColor(frame[roi_top_f:], cv2.COLOR_BGR2GRAY)
+        gray_roi_f = cv2.GaussianBlur(gray_roi_f, (5, 5), 0)
+        if self._prev_gray is not None and fire_color:
+            diff = cv2.absdiff(self._prev_gray, gray_roi_f)
+            _, motion = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+            motion_ratio = cv2.countNonZero(motion) / max(motion.size, 1)
+            fire = fire_color and motion_ratio > 0.005  # 움직임 0.5% 이상이어야 불꽃
+        else:
+            fire = False  # 첫 프레임은 비교 불가
+        self._prev_gray = gray_roi_f
 
         # 연기 적응형 판단: 배경 기준선 대비 급증 여부
         self._smoke_history.append(smoke_r)
@@ -865,17 +1020,27 @@ class VisitorManager:
             # (벽이 평소에 40% 회색이면 → 55%+ 되어야 트리거)
             smoke = (smoke_r > self._smoke_baseline + 0.15 and smoke_r > 0.20)
 
-        if fire and self._fire_cd == 0:
+        # ── 연속 프레임 카운터 업데이트 ──
+        self._fire_consec  = self._fire_consec + 1  if fire  else 0
+        self._smoke_consec = self._smoke_consec + 1 if smoke else 0
+
+        # ── 화재 알람: 연속 FIRE_CONFIRM_F 프레임 이상 + 쿨다운 ──
+        if self._fire_consec >= FIRE_CONFIRM_F and self._fire_cd == 0:
             self._fire_cd = self.FIRE_CD
+            self._fire_consec = 0
             self.fire_count += 1
             self._add_alert("🔥 화재 감지!", (0, 40, 220))
+            play_fire_alarm()
             speak("화재가 감지되었습니다 즉시 대피하세요")
             log_event("화재감지")
             self.kakao.send("화재감지", "매장 내 화재 감지! 즉시 대피하세요", frame)
-        if smoke and self._fire_cd == 0:
+
+        if self._smoke_consec >= FIRE_CONFIRM_F and self._fire_cd == 0:
             self._fire_cd = self.FIRE_CD
+            self._smoke_consec = 0
             self.fire_count += 1
             self._add_alert("💨 연기 감지!", (60, 60, 200))
+            play_fire_alarm()
             speak("연기가 감지되었습니다")
             log_event("연기감지")
             self.kakao.send("연기감지", "매장 내 연기 감지!", frame)
@@ -1053,6 +1218,7 @@ def main():
 
     fps_t = time.time()
     fcnt  = 0
+    fps   = 0.0
 
     try:
         while True:

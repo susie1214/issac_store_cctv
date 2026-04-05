@@ -22,6 +22,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import cv2
 import numpy as np
+import socket
+
 import requests
 from dotenv import load_dotenv
 
@@ -67,6 +69,7 @@ class KakaoNotifier:
         res = requests.post("https://kauth.kakao.com/oauth/token", data={
             "grant_type":    "refresh_token",
             "client_id":     REST_API_KEY,
+            "client_secret": os.getenv("KAKAO_CLIENT_SECRET", ""),
             "refresh_token": refresh_token,
         })
         if res.status_code == 200:
@@ -92,12 +95,19 @@ class KakaoNotifier:
             return False
         self._last_sent[event_type] = now
 
-        # 이미지 캡처 저장
+        # 이미지 캡처 → static 폴더에 저장 (웹서버로 접근 가능)
         img_url = None
         if frame is not None:
-            img_path = Path("logs/alert_capture.jpg")
-            img_path.parent.mkdir(exist_ok=True)
-            cv2.imwrite(str(img_path), frame)
+            cap_path = Path("static/alert_capture.jpg")
+            cap_path.parent.mkdir(exist_ok=True)
+            cv2.imwrite(str(cap_path), frame)
+            # 내부 IP로 접근 가능한 URL
+            try:
+                import socket
+                ip = socket.gethostbyname(socket.gethostname())
+            except Exception:
+                ip = "172.30.1.34"
+            img_url = f"http://{ip}:38241/static/alert_capture.jpg"
 
         # 메시지 아이콘
         icons = {
@@ -107,19 +117,52 @@ class KakaoNotifier:
         icon = icons.get(event_type, "ℹ️")
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 
-        template = {
-            "object_type": "text",
-            "text": (
-                f"{icon} [{event_type}] 스마트 매장 알림\n\n"
-                f"내용: {detail}\n"
-                f"시각: {now_str}\n\n"
-                f"📱 대시보드 확인 → http://172.30.1.69:38241"
-            ),
-            "link": {
-                "web_url":    "http://172.30.1.69:38241",
-                "mobile_web_url": "http://172.30.1.69:38241",
-            },
-        }
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            ip = "172.30.1.34"
+        dashboard_url = f"http://{ip}:38241"
+
+        # 이미지 있으면 feed 타입, 없으면 text 타입
+        if img_url:
+            template = {
+                "object_type": "feed",
+                "content": {
+                    "title": f"{icon} [{event_type}] 스마트 매장 알림",
+                    "description": (
+                        f"내용: {detail}\n"
+                        f"시각: {now_str}"
+                    ),
+                    "image_url": img_url,
+                    "image_width": 640,
+                    "image_height": 480,
+                    "link": {
+                        "web_url": dashboard_url,
+                        "mobile_web_url": dashboard_url,
+                    },
+                },
+                "buttons": [{
+                    "title": "📱 대시보드 확인",
+                    "link": {
+                        "web_url": dashboard_url,
+                        "mobile_web_url": dashboard_url,
+                    },
+                }],
+            }
+        else:
+            template = {
+                "object_type": "text",
+                "text": (
+                    f"{icon} [{event_type}] 스마트 매장 알림\n\n"
+                    f"내용: {detail}\n"
+                    f"시각: {now_str}\n\n"
+                    f"📱 대시보드 → {dashboard_url}"
+                ),
+                "link": {
+                    "web_url": dashboard_url,
+                    "mobile_web_url": dashboard_url,
+                },
+            }
 
         res = requests.post(
             "https://kapi.kakao.com/v2/api/talk/memo/default/send",
@@ -165,7 +208,7 @@ def _auth_flow():
             code_holder["code"] = qs.get("code", [""])[0]
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"<h2>인증 완료! 창을 닫으세요.</h2>")
+            self.wfile.write("<h2>인증 완료! 창을 닫으세요.</h2>".encode("utf-8"))
         def log_message(self, *a): pass
 
     port = int(REDIRECT_URI.split(":")[-1].split("/")[0])
@@ -180,10 +223,11 @@ def _auth_flow():
 
     # 토큰 교환
     res = requests.post("https://kauth.kakao.com/oauth/token", data={
-        "grant_type":   "authorization_code",
-        "client_id":    REST_API_KEY,
-        "redirect_uri": REDIRECT_URI,
-        "code":         code,
+        "grant_type":    "authorization_code",
+        "client_id":     REST_API_KEY,
+        "client_secret": os.getenv("KAKAO_CLIENT_SECRET", ""),
+        "redirect_uri":  REDIRECT_URI,
+        "code":          code,
     })
     if res.status_code == 200:
         data = res.json()
