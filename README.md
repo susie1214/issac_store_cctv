@@ -334,13 +334,13 @@ models/kakao_token.json  ← 카카오 토큰 (gitignore 처리됨)
 
 ## 라이선스
 
-MIT License — ThingsWell Co., Ltd.
+MIT License
 
 ---
 
 <div align="center">
 
-**ThingsWell AI Monitor** · 스마트 소형 매장 특화 솔루션  
+smart_store AI Monitor · 스마트 소형 매장 특화 솔루션  
 문의: [GitHub Issues](https://github.com/susie1214/issac_store_cctv/issues)
 
 </div>
