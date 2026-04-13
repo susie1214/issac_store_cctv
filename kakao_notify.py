@@ -3,10 +3,6 @@
 ====================================
 도난/침입/낙상 등 감지 시 사장님 카카오톡으로 즉시 알림.
 캡처 이미지도 함께 전송.
-
-준비:
-  1. .env 에 KAKAO_REST_API_KEY 설정
-  2. python kakao_notify.py --auth   (최초 1회 토큰 발급)
 """
 
 from __future__ import annotations
@@ -106,7 +102,7 @@ class KakaoNotifier:
                 import socket
                 ip = socket.gethostbyname(socket.gethostname())
             except Exception:
-                ip = "172.30.1.34"
+                ip = "172.0.0.1"
             img_url = f"http://{ip}:38241/static/alert_capture.jpg"
 
         # 메시지 아이콘
